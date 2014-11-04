@@ -74,7 +74,6 @@ function updateCurrentUrlMetaTags(&$html, &$data)
 
 function catchMetaTags(&$html, &$meta)
 {
-    $descriptionFound = $keywordsFound = false;
     preg_match_all("|<meta[^>]+name=\"([^\"]*)\"[^>]+content=\"([^\"]*)\"[^>]*>|i", $html, $matchs, PREG_SET_ORDER);
     foreach($matchs as $match ){
         foreach($match as $key => $attr){
@@ -108,9 +107,9 @@ function catchTitle(&$html, &$title)
 $result = $client->count($params);
 
 while ($result['count'] >= 1) {
-    // TODO limit filter
     $json = '
     {
+        "size" : 200,
         "query": {
             "bool": {
                 "must": [
