@@ -15,7 +15,7 @@ function generateParams($parameters = array())
     return array_merge($params, $parameters);
 }
 
-function envoyerEnBDD(&$sites)
+function save(&$sites)
 {
     global $client;
     foreach ($sites as $url) {
@@ -48,13 +48,13 @@ function _addslashes(&$t)
     }
 }
 
-function updateMeta(&$html, &$data)
+function updateCurrentUrlMetaTags(&$html, &$data)
 {
     global $client;
     $meta = array();
     $title = '';
-    recupTitle($html, $title);
-    recupererMetaTags($html, $meta);
+    catchTitle($html, $title);
+    catchMetaTags($html, $meta);
 
     _addslashes($meta);
     $title = addslashes($title);
@@ -72,42 +72,35 @@ function updateMeta(&$html, &$data)
     $client->update($parameters);
 }
 
-function recupererMetaTags(&$html, &$meta)
+function catchMetaTags(&$html, &$meta)
 {
-    $trouve1 = $trouve2 = false;
-    preg_match_all("|<meta[^>]+name=\"([^\"]*)\"[^>]+content=\"([^\"]*)\"[^>]*>|i", $html, $out, PREG_SET_ORDER);
-    foreach($out as $tab ){
-        foreach($tab as $jah){
-            if($trouve1) {$meta['description']=$jah;$trouve1=false;}
-            else if($trouve2) {$meta['keywords']=$jah; $trouve2=false;}
-            if($jah=='description') {$trouve1=true;}
-            else if($jah=='keywords') {$trouve2=true;}
+    $descriptionFound = $keywordsFound = false;
+    preg_match_all("|<meta[^>]+name=\"([^\"]*)\"[^>]+content=\"([^\"]*)\"[^>]*>|i", $html, $matchs, PREG_SET_ORDER);
+    foreach($matchs as $match ){
+        foreach($match as $key => $attr){
+            if($attr == 'description') {
+                $meta['description'] = $match[$key + 1];
+            } else if($attr == 'keywords') {
+                $meta['keywords'] = $match[$key + 1];
+            }
         }
     }
 }
 
-function recupUrls(&$html, &$urls)
+function catchUrls(&$html, &$urls)
 {
-    if (preg_match_all("|<a[^>]+href=\"http://([^\"\?\/]+\.[a-z]{2,4}).*\"[^>]*>|i", $html, $datas)) {
-        foreach ($datas[1] as $url) {
+    if (preg_match_all("|<a[^>]+href=\"http://([^\"\?\/]+\.[a-z]{2,4}).*\"[^>]*>|i", $html, $matchs)) {
+        foreach ($matchs[1] as $url) {
             $urls[] = $url;
         }
     }
 }
 
-function recupTitle(&$html, &$title)
+function catchTitle(&$html, &$title)
 {
-    if (preg_match("|<title>(.+)</title>|i", $html, $tle)) {
-        $title = $tle[1];
+    if (preg_match("|<title>(.+)</title>|i", $html, $match)) {
+        $title = $match[1];
     }
-}
-
-function traitementUrlBDD(&$html, &$data)
-{
-    $urls = array();
-    updateMeta($html, $data);
-    recupUrls($html, $urls);
-    envoyerEnBDD($urls);
 }
 
 //$leSite="http://www.meilleurs-sites.fr/";
@@ -129,15 +122,15 @@ while ($result['count'] >= 1) {
     }';
     $results = $client->search(generateParams(array('body' => $json)));
 
-    foreach ($results['hits']['hits'] as $data) {
+    foreach ($results['hits']['hits'] as $site) {
         $parameters = generateParams(array(
-            'id' => $data['_id'],
+            'id' => $site['_id'],
             'body' => array('doc' => array('en_visite' => 1))
         ));
         $client->update($parameters);
     }
-    foreach ($results['hits']['hits'] as $data) {
-        $leSite = 'http://' . $data['_id'];
+    foreach ($results['hits']['hits'] as $site) {
+        $leSite = 'http://' . $site['_id'];
         $useragent = "Mozilla/5.0";
         $ch = curl_init($leSite);
         curl_setopt($ch, CURLOPT_USERAGENT, $useragent);
@@ -146,9 +139,13 @@ while ($result['count'] >= 1) {
         curl_setopt($ch, CURLOPT_TIMEOUT_MS, 7000);
         $html = curl_exec($ch);
 
-        $parameters = generateParams(array('id' => $data['_id']));
+        $parameters = generateParams(array('id' => $site['_id']));
         if ($html != false) {
-            traitementUrlBDD($html, $data);
+            $urls = array();
+            updateCurrentUrlMetaTags($html, $site);
+            catchUrls($html, $urls);
+            save($urls);
+
             $parameters['body'] = array('doc' => array('visite' => 1, 'en_visite' => 0));
             $client->update($parameters);
         } else {
