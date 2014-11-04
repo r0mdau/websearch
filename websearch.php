@@ -20,12 +20,7 @@ function envoyerEnBDD(&$sites)
     global $client;
     foreach ($sites as $url) {
         $parameters = generateParams(array('id' => $url));
-        $data = null;
-        try {
-            $data = $client->get($parameters);
-        } catch (Exception $e) {
-            echo $e->getMessage()."\n";
-        }
+        $data = $client->get($parameters);
 
         if (!isset($data['_source'])) {
             $parameters['body'] = array(
