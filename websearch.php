@@ -9,71 +9,72 @@ $params = array(
     'ignore' => [400, 404]
 );
 
+function generateParams($parameters = array())
+{
+    global $params;
+    return array_merge($params, $parameters);
+}
+
 function envoyerEnBDD(&$sites)
 {
-    global $client, $params;
-    foreach($sites as $url){
-        $rightNowParams = array(
-            'index' => $params['index'],
-            'type' => $params['type'],
-            'id' => $url
-        );
-
+    global $client;
+    foreach ($sites as $url) {
+        $parameters = generateParams(array('id' => $url));
         $data = null;
         try {
-            $data = $client->get($rightNowParams);
-        } catch (Exception $e){
-
+            $data = $client->get($parameters);
+        } catch (Exception $e) {
+            echo $e->getMessage()."\n";
         }
 
-        if(!isset($data['_source'])) {
-            $rightNowParams['body'] = array(
+        if (!isset($data['_source'])) {
+            $parameters['body'] = array(
                 'visite' => 0,
                 'en_visite' => 0,
                 'score' => 0
             );
-            echo $rightNowParams['id']."\n";
-            $client->index($rightNowParams);
+            echo $url . "\n";
+            $client->index($parameters);
         } else {
-            $site = $data['_source'];
-            $client->delete($rightNowParams);
-
-            $site['score']++;
-            $rightNowParams['body'] = $site;
-            $client->index($rightNowParams);
+            $parameters['body'] = array(
+                'doc' => array(
+                    'score' => $data['_source']['score'] + 1
+                )
+            );
+            $client->update($parameters);
         }
     }
 }
 
 function _addslashes(&$t)
 {
-    foreach($t as $p => $k) {
+    foreach ($t as $p => $k) {
         $t[$p] = addslashes($k);
     }
 }
 
 function updateMeta(&$html, &$data)
 {
-    global $client, $params; $meta = array(); $title = '';
+    global $client;
+    $meta = array();
+    $title = '';
     recupTitle($html, $title);
     recupererMetaTags($html, $meta);
 
     _addslashes($meta);
     $title = addslashes($title);
 
-    $site = $data['_source'];
-    $rightNowParams = array(
-        'index' => $params['index'],
-        'type' => $params['type'],
-        'id' => $data['_id']
-    );
-    $client->delete($rightNowParams);
-
-    $site['title'] = $title;
-    $site['description'] = isset($meta['description']) ? $meta['description'] : '';
-    $site['keywords'] = isset($meta['keywords']) ? $meta['keywords'] : '';
-    $rightNowParams['body'] = $site;
-    $client->index($rightNowParams);
+    $parameters = generateParams(array(
+        'id' => $data['_id'],
+        'body' => array(
+            'doc' => array(
+                'title' => $title,
+                'description' => (isset($meta['description']) ? $meta['description'] : ''),
+                'keywords' => (isset($meta['keywords']) ? $meta['keywords'] : '')
+            )
+        )
+    ));
+    $client->update($parameters);
 }
 
 function recupererMetaTags(&$html, &$meta)
@@ -84,15 +85,15 @@ function recupererMetaTags(&$html, &$meta)
         foreach($tab as $jah){
             if($trouve1) {$meta['description']=$jah;$trouve1=false;}
             else if($trouve2) {$meta['keywords']=$jah; $trouve2=false;}
-            if($jah=='description') $trouve1=true;
-            else if($jah=='keywords') $trouve2=true;
+            if($jah=='description') {$trouve1=true;}
+            else if($jah=='keywords') {$trouve2=true;}
         }
     }
 }
 
 function recupUrls(&$html, &$urls)
 {
-    if(preg_match_all("|<a[^>]+href=\"http://([^\"\?\/]+\.[a-z]{2,4}).*\"[^>]*>|i", $html, $datas)) {
+    if (preg_match_all("|<a[^>]+href=\"http://([^\"\?\/]+\.[a-z]{2,4}).*\"[^>]*>|i", $html, $datas)) {
         foreach ($datas[1] as $url) {
             $urls[] = $url;
         }
@@ -101,7 +102,7 @@ function recupUrls(&$html, &$urls)
 
 function recupTitle(&$html, &$title)
 {
-    if(preg_match("|<title>(.+)</title>|i", $html, $tle)) {
+    if (preg_match("|<title>(.+)</title>|i", $html, $tle)) {
         $title = $tle[1];
     }
 }
@@ -109,7 +110,7 @@ function recupTitle(&$html, &$title)
 function traitementUrlBDD(&$html, &$data)
 {
     $urls = array();
-    //updateMeta($html, $data);
+    updateMeta($html, $data);
     recupUrls($html, $urls);
     envoyerEnBDD($urls);
 }
@@ -118,8 +119,7 @@ function traitementUrlBDD(&$html, &$data)
 
 $result = $client->count($params);
 
-while($result['count'] >= 1)
-{
+while ($result['count'] >= 1) {
     // TODO limit filter
     $json = '
     {
@@ -132,30 +132,17 @@ while($result['count'] >= 1)
             }
         }
     }';
-    $results = $client->search(array(
-        'index' => $params['index'],
-        'type' => $params['type'],
-        'body' => $json
-    ));
+    $results = $client->search(generateParams(array('body' => $json)));
 
-    foreach($results['hits']['hits'] as $data){
-        $site = $data['_source'];
-        $client->delete(array(
-            'index' => $params['index'],
-            'type' => $params['type'],
-            'id' => $data['_id']
-        ));
-
-        $site['en_visite'] = 1;
-        $client->index(array(
-            'index' => $params['index'],
-            'type' => $params['type'],
+    foreach ($results['hits']['hits'] as $data) {
+        $parameters = generateParams(array(
             'id' => $data['_id'],
-            'body' => $site
+            'body' => array('doc' => array('en_visite' => 1))
         ));
+        $client->update($parameters);
     }
-    foreach($results['hits']['hits'] as $data) {
-        $leSite = 'http://'.$data['_id'];
+    foreach ($results['hits']['hits'] as $data) {
+        $leSite = 'http://' . $data['_id'];
         $useragent = "Mozilla/5.0";
         $ch = curl_init($leSite);
         curl_setopt($ch, CURLOPT_USERAGENT, $useragent);
@@ -164,23 +151,13 @@ while($result['count'] >= 1)
         curl_setopt($ch, CURLOPT_TIMEOUT_MS, 7000);
         $html = curl_exec($ch);
 
-        $rightNowParams = array(
-            'index' => $params['index'],
-            'type' => $params['type'],
-            'id' => $data['_id']
-        );
-
-        if($html != false){
+        $parameters = generateParams(array('id' => $data['_id']));
+        if ($html != false) {
             traitementUrlBDD($html, $data);
-            $client->delete($rightNowParams);
-
-            $site = $data['_source'];
-            $site['visite'] = 1;
-            $site['en_visite'] = 0;
-            $rightNowParams['body'] = $site;
-            $client->index($rightNowParams);
-        }else{
-            $client->delete($rightNowParams);
+            $parameters['body'] = array('doc' => array('visite' => 1, 'en_visite' => 0));
+            $client->update($parameters);
+        } else {
+            $client->delete($parameters);
         }
         curl_close($ch);
     }
