@@ -3,6 +3,7 @@ require 'vendor/autoload.php';
 
 $client = new Elasticsearch\Client(array('hosts' => array('192.168.1.200')));
 
+define('_RETRY_CONFLICT_', 100);
 $params = array(
     'index' => 'web',
     'type' => 'site',
@@ -31,6 +32,7 @@ function save(&$sites)
             echo $url . "\n";
             $client->index($parameters);
         } else {
+            $parameters['retry_on_conflict'] = _RETRY_CONFLICT_;
             $parameters['body'] = array(
                 'doc' => array(
                     'score' => $data['_source']['score'] + 1
@@ -67,7 +69,8 @@ function updateCurrentUrlMetaTags(&$html, &$data)
                 'description' => (isset($meta['description']) ? $meta['description'] : ''),
                 'keywords' => (isset($meta['keywords']) ? $meta['keywords'] : '')
             )
-        )
+        ),
+        'retry_on_conflict' => _RETRY_CONFLICT_
     ));
     $client->update($parameters);
 }
@@ -124,7 +127,8 @@ while ($result['count'] >= 1) {
     foreach ($results['hits']['hits'] as $site) {
         $parameters = generateParams(array(
             'id' => $site['_id'],
-            'body' => array('doc' => array('en_visite' => 1))
+            'body' => array('doc' => array('en_visite' => 1)),
+            'retry_on_conflict' => _RETRY_CONFLICT_
         ));
         $client->update($parameters);
     }
@@ -145,6 +149,7 @@ while ($result['count'] >= 1) {
             catchUrls($html, $urls);
             save($urls);
 
+            $parameters['retry_on_conflict'] = _RETRY_CONFLICT_;
             $parameters['body'] = array('doc' => array('visite' => 1, 'en_visite' => 0));
             $client->update($parameters);
         } else {
