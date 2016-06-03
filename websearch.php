@@ -1,28 +1,80 @@
 <?php
+define('_RETRY_CONFLICT_', 100);
+
 require 'vendor/autoload.php';
 
+//$leSite="http://www.meilleurs-sites.fr/"; YEAH HISTORY
 $client = new Elasticsearch\Client(array('hosts' => array('192.168.1.200')));
+$result = $client->count(generateParams());
 
-define('_RETRY_CONFLICT_', 100);
-$params = array(
-    'index' => 'web',
-    'type' => 'site',
-    'ignore' => [400, 404]
-);
+while ($result['count'] >= 1) {
+    $json = '
+    {
+        "size" : 200,
+        "query": {
+            "bool": {
+                "must": [
+                    { "match": { "visite":  0 }},
+                    { "match": { "en_visite": 0 }}
+                ]
+            }
+        }
+    }';
+    $results = $client->search(generateParams(array('body' => $json)));
+
+    foreach ($results['hits']['hits'] as $site) {
+        $client->update(generateParams(array(
+            'id' => $site['_id'],
+            'body' => array('doc' => array('en_visite' => 1)),
+            'retry_on_conflict' => _RETRY_CONFLICT_
+        )));
+    }
+
+    foreach ($results['hits']['hits'] as $site) {
+        $leSite = 'http://' . $site['_id'];
+        $ch = curl_init($leSite);
+        curl_setopt($ch, CURLOPT_USERAGENT, "Mozilla/5.0");
+        curl_setopt($ch, CURLOPT_REFERER, $leSite);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT_MS, 7000);
+        $html = curl_exec($ch);
+
+        if ($html == false) {
+            $client->delete(generateParams(array(
+                'id' => $site['_id']
+            )));
+            continue;
+        }
+
+        updateCurrentUrlMetaTags($html, $site['_id']);
+
+        save(catchUrls($html));
+
+        $client->update(generateParams(array(
+            'id' => $site['_id'],
+            'retry_on_conflict' => _RETRY_CONFLICT_,
+            'body' => array('doc' => array('visite' => 1, 'en_visite' => 0)),
+        )));
+        curl_close($ch);
+    }
+    $result = $client->count(generateParams());
+}
 
 function generateParams($parameters = array())
 {
-    global $params;
-    return array_merge($params, $parameters);
+    return array_merge(array(
+        'index' => 'web',
+        'type' => 'site',
+        'ignore' => [400, 404]
+    ), $parameters);
 }
 
-function save(&$sites)
+function save($urls)
 {
     global $client;
-    foreach ($sites as $url) {
+    foreach ($urls as $url) {
         $parameters = generateParams(array('id' => $url));
         $data = $client->get($parameters);
-
         if (!isset($data['_source'])) {
             $parameters['body'] = array(
                 'visite' => 0,
@@ -43,119 +95,54 @@ function save(&$sites)
     }
 }
 
-function _addslashes(&$t)
-{
-    foreach ($t as $p => $k) {
-        $t[$p] = addslashes($k);
-    }
-}
-
-function updateCurrentUrlMetaTags(&$html, &$data)
+function updateCurrentUrlMetaTags($html, $siteId)
 {
     global $client;
-    $meta = array();
-    $title = '';
-    catchTitle($html, $title);
-    catchMetaTags($html, $meta);
-
-    _addslashes($meta);
-    $title = addslashes($title);
-
-    $parameters = generateParams(array(
-        'id' => $data['_id'],
+    $meta = catchMetaTags($html);
+    $client->update(generateParams(array(
+        'id' => $siteId,
         'body' => array(
             'doc' => array(
-                'title' => $title,
+                'title' => catchTitle($html),
                 'description' => (isset($meta['description']) ? $meta['description'] : ''),
                 'keywords' => (isset($meta['keywords']) ? $meta['keywords'] : '')
             )
         ),
         'retry_on_conflict' => _RETRY_CONFLICT_
-    ));
-    $client->update($parameters);
+    )));
 }
 
-function catchMetaTags(&$html, &$meta)
+function catchMetaTags($html)
 {
+    $meta = array();
     preg_match_all("|<meta[^>]+name=\"([^\"]*)\"[^>]+content=\"([^\"]*)\"[^>]*>|i", $html, $matchs, PREG_SET_ORDER);
-    foreach($matchs as $match ){
-        foreach($match as $key => $attr){
-            if($attr == 'description') {
-                $meta['description'] = $match[$key + 1];
-            } else if($attr == 'keywords') {
-                $meta['keywords'] = $match[$key + 1];
+    foreach ($matchs as $match) {
+        foreach ($match as $key => $attr) {
+            if ($attr == 'description') {
+                $meta['description'] = addslashes($match[$key + 1]);
+            } else if ($attr == 'keywords') {
+                $meta['keywords'] = addslashes($match[$key + 1]);
             }
         }
     }
+    return $meta;
 }
 
-function catchUrls(&$html, &$urls)
+function catchUrls($html)
 {
+    $urls = array();
     if (preg_match_all("|<a[^>]+href=\"http://([^\"\?\/]+\.[a-z]{2,4}).*\"[^>]*>|i", $html, $matchs)) {
         foreach ($matchs[1] as $url) {
             $urls[] = $url;
         }
     }
+    return $urls;
 }
 
-function catchTitle(&$html, &$title)
+function catchTitle($html)
 {
     if (preg_match("|<title>(.+)</title>|i", $html, $match)) {
-        $title = $match[1];
+        return addslashes($match[1]);
     }
-}
-
-//$leSite="http://www.meilleurs-sites.fr/";
-
-$result = $client->count($params);
-
-while ($result['count'] >= 1) {
-    $json = '
-    {
-        "size" : 200,
-        "query": {
-            "bool": {
-                "must": [
-                    { "match": { "visite":  0 }},
-                    { "match": { "en_visite": 0 }}
-                ]
-            }
-        }
-    }';
-    $results = $client->search(generateParams(array('body' => $json)));
-
-    foreach ($results['hits']['hits'] as $site) {
-        $parameters = generateParams(array(
-            'id' => $site['_id'],
-            'body' => array('doc' => array('en_visite' => 1)),
-            'retry_on_conflict' => _RETRY_CONFLICT_
-        ));
-        $client->update($parameters);
-    }
-    foreach ($results['hits']['hits'] as $site) {
-        $leSite = 'http://' . $site['_id'];
-        $useragent = "Mozilla/5.0";
-        $ch = curl_init($leSite);
-        curl_setopt($ch, CURLOPT_USERAGENT, $useragent);
-        curl_setopt($ch, CURLOPT_REFERER, $leSite);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT_MS, 7000);
-        $html = curl_exec($ch);
-
-        $parameters = generateParams(array('id' => $site['_id']));
-        if ($html != false) {
-            $urls = array();
-            updateCurrentUrlMetaTags($html, $site);
-            catchUrls($html, $urls);
-            save($urls);
-
-            $parameters['retry_on_conflict'] = _RETRY_CONFLICT_;
-            $parameters['body'] = array('doc' => array('visite' => 1, 'en_visite' => 0));
-            $client->update($parameters);
-        } else {
-            $client->delete($parameters);
-        }
-        curl_close($ch);
-    }
-    $result = $client->count($params);
+    return '';
 }
