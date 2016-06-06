@@ -108,14 +108,12 @@ function updateURIMetaTags($html, $siteId)
 function catchMetaTags($html)
 {
     $meta = array();
-    if (preg_match_all("|<meta[^>]+name=\"([^\"]*)\"[^>]+content=\"([^\"]*)\"[^>]*>|i", $html, $matchs, PREG_SET_ORDER)) {
+    if (preg_match_all("|<meta[^>]+name=\"([^\"]*)\"[^>]+content=\"([^\"]*)\"[^>]*>|iU", $html, $matchs, PREG_SET_ORDER)) {
         foreach ($matchs as $match) {
-            foreach ($match as $key => $attr) {
-                if ($attr == 'description') {
-                    $meta['description'] = addslashes($match[$key + 1]);
-                } else if ($attr == 'keywords') {
-                    $meta['keywords'] = addslashes($match[$key + 1]);
-                }
+            if ($match[1] == 'description') {
+                $meta['description'] = addslashes($match[2]);
+            } elseif ($match[1] == 'keywords') {
+                $meta['keywords'] = addslashes($match[2]);
             }
         }
     }
@@ -127,7 +125,7 @@ function catchURIs($html)
     $urls = array();
     if (preg_match_all("|<a[^>]+href=\"http://([^\"\?\/]+\.[a-z]{2,4}).*\"[^>]*>|i", $html, $matchs)) {
         foreach ($matchs[1] as $url) {
-            $urls[] = $url;
+            $urls[$url] = $url;
         }
     }
     return $urls;
@@ -135,7 +133,7 @@ function catchURIs($html)
 
 function catchTitle($html)
 {
-    if (preg_match("|<title>(.+)</title>|i", $html, $match)) {
+    if (preg_match("|<title>(.+)</title>|iU", $html, $match)) {
         return addslashes($match[1]);
     }
     return '';
